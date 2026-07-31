@@ -1,0 +1,35 @@
+server:
+  port: 8817
+
+spring:
+  application:
+    name: warehouse-brain-mcp
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        name: warehouse-brain
+        version: 0.1.0
+        type: SYNC
+        instructions: "Tools for the Warehouse Brain PARA workspace in Notion (projects linked to Jira tickets)."
+        capabilities:
+          resource: false
+          prompt: false
+          completion: false
+        streamable-http:
+          mcp-endpoint: /mcp
+          keep-alive-interval: 30s
+
+mcp:
+  auth:
+    api-key: ${MCP_API_KEY:}
+
+notion:
+  api-key: ${NOTION_API_KEY:}
+  base-url: https://api.notion.com/v1
+  version: 2026-03-11
+  projects-data-source-id: ${NOTION_PROJECTS_DS_ID:344277efb4f580caa27c000bc39a1ad3}
+  archives-data-source-id: ${NOTION_ARCHIVES_DS_ID:248277efb4f580c2980f000b9b813d3a}
+  template-id: ${NOTION_TEMPLATE_ID:344277efb4f58041a739f11f346bbe84}
+  jira-property-name: Jira
+  started-property-name: started

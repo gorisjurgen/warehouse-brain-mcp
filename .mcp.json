@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "warehouse-brain": {
+      "type": "http",
+      "url": "http://localhost:8817/mcp"
+    }
+  }
+}
