@@ -1,6 +1,6 @@
 ---
-name: warehouse-project-archive
-description: archives a warehouse project in my warehouse PARA setup in Notion, moving it from Projects to Archives. Use when user asks to "archive warehouse project".
+name: wb_project_archive
+description: archives a warehouse project from Jira in my warehouse PARA setup in Notion, moving it from Projects to Archives. Use when user asks to "archive warehouse project".
 ---
 
 # Warehouse Project Archive
