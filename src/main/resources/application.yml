@@ -33,3 +33,6 @@ notion:
   template-id: ${NOTION_TEMPLATE_ID:344277efb4f58041a739f11f346bbe84}
   jira-property-name: Jira
   started-property-name: started
+  ticket-url-property-name: ${NOTION_TICKET_URL_PROPERTY:ticket}
+  state-property-name: ${NOTION_STATE_PROPERTY:State}
+  initial-state: ${NOTION_INITIAL_STATE:Not started}

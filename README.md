@@ -9,11 +9,11 @@ as MCP tools for Claude, plus the Claude skills that use them.
 | Tool | Description |
 |---|---|
 | `findProject` | Find a project by Jira ticket key; searches Projects **and** Archives |
-| `createProject` | Create a project page from the Warehouse Project Template with Jira + Started + title set (duplicate-guarded) |
+| `createProject` | Create a project page from the Warehouse Project Template with Jira + Started + title set, optional ticket URL, State = "Not started" (duplicate-guarded) |
 | `archiveProject` | Move a project page from Projects to Archives (PARA archive, not trash) |
 | `listActiveProjects` | List active projects, most recently started first |
 | `getProjectContent` | Read a project's page body as Markdown (looks up by Jira key in Projects + Archives) |
-| `updateProjectContent` | Write Markdown to a project's page body: `append` adds at the end, `replace` **deletes the whole body** and rewrites it |
+| `updateProjectContent` | Write Markdown to a project's page body: `append` adds at the end, `replace` **deletes the whole body** and rewrites it; `afterHeading` inserts into a section (e.g. under "Project Description") |
 
 `getProjectContent`/`updateProjectContent` support a Markdown subset: headings
 1–3, paragraphs, bulleted/numbered lists, to-dos (`- [ ]`), fenced code,
@@ -21,8 +21,12 @@ quotes, dividers. Rich-text formatting is flattened to plain text on read;
 nested lists are indented on read but parsed flat on write.
 
 Skills in [.claude/skills/](.claude/skills/) (`warehouse-project-start`,
-`warehouse-project-archive`) drive these tools; the server is registered for
-Claude Code via [.mcp.json](.mcp.json) (Streamable HTTP on `http://localhost:8817/mcp`).
+`warehouse-project-archive`, `wb_project_start`) drive these tools; the server
+is registered for Claude Code via [.mcp.json](.mcp.json) (Streamable HTTP on
+`http://localhost:8817/mcp`). `/wb_project_start <ticket>` additionally uses
+the Atlassian/Rovo MCP tools: it only creates the project when the WHS ticket
+is assigned to the current user, and copies the Jira description into the
+page's "Project Description" section.
 
 ## Prerequisites
 
@@ -44,6 +48,9 @@ in [application.yml](src/main/resources/application.yml) and can be overridden.
 | `NOTION_ARCHIVES_DS_ID` | for `archiveProject` | Archives data-source id |
 | `NOTION_TEMPLATE_ID` | for template content | Warehouse Project Template id |
 | `MCP_API_KEY` | for remote deployment | API key clients must send; auth is **disabled** when unset |
+| `NOTION_TICKET_URL_PROPERTY` | no | URL property for the Jira browse link (default `ticket`; blank disables) |
+| `NOTION_STATE_PROPERTY` | no | Status property set on creation (default `State`; blank disables) |
+| `NOTION_INITIAL_STATE` | no | Status value for new projects (default `Not started`) |
 
 > **Data-source ids, not database ids.** Since Notion API `2025-09-03` a
 > database contains one or more *data sources*, and queries target the data

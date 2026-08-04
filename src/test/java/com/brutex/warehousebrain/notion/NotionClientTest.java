@@ -37,7 +37,8 @@ class NotionClientTest {
         NotionProperties props = new NotionProperties(
                 "secret-token", BASE, "2026-03-11",
                 "ds-projects", "ds-archives", "tpl-1",
-                "Jira", "rich_text", "Started");
+                "Jira", "rich_text", "Started",
+                "ticket", "State", "Not started");
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         RestClient rest = new NotionClientConfig().notionRestClient(props, builder, mapper);
@@ -134,6 +135,21 @@ class NotionClientTest {
         var children = mapper.createArrayNode();
         children.addObject().put("object", "block").put("type", "paragraph");
         client.appendBlockChildren("page-1", children);
+
+        server.verify();
+    }
+
+    @Test
+    void appendBlockChildrenWithAfterSendsAfterFieldAndCompatVersion() {
+        server.expect(requestTo(BASE + "/blocks/page-1/children"))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(jsonPath("$.after").value("block-7"))
+                .andExpect(header("Notion-Version", NotionClient.AFTER_COMPAT_VERSION))
+                .andRespond(withSuccess("{\"results\":[]}", MediaType.APPLICATION_JSON));
+
+        var children = mapper.createArrayNode();
+        children.addObject().put("object", "block").put("type", "paragraph");
+        client.appendBlockChildren("page-1", children, "block-7");
 
         server.verify();
     }

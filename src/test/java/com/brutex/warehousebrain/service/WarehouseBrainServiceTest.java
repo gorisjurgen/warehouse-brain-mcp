@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,7 +42,8 @@ class WarehouseBrainServiceTest {
         NotionProperties props = new NotionProperties(
                 "token", "https://notion.test/v1", "2026-03-11",
                 PROJECTS_DS, archivesDsId, templateId,
-                "Jira", "rich_text", "Started");
+                "Jira", "rich_text", "Started",
+                "ticket", "State", "Not started");
         return new WarehouseBrainService(notion, props, mapper, new NotionMarkdown(mapper));
     }
 
@@ -114,7 +116,7 @@ class WarehouseBrainServiceTest {
         when(notion.queryDataSource(eq(PROJECTS_DS), any()))
                 .thenReturn(List.of(page("p1", "Existing", "WMS-1")));
 
-        ToolResult result = service(null, "tpl-1").createProject("WMS-1", "New project");
+        ToolResult result = service(null, "tpl-1").createProject("WMS-1", "New project", null);
 
         assertThat(result.status()).isEqualTo("error");
         assertThat(result.message()).contains("already exists");
@@ -126,7 +128,8 @@ class WarehouseBrainServiceTest {
         when(notion.queryDataSource(eq(PROJECTS_DS), any())).thenReturn(List.of());
         when(notion.createPage(any())).thenReturn(page("new-1", "New project", "WMS-2"));
 
-        ToolResult result = service(null, "tpl-1").createProject("WMS-2", "New project");
+        ToolResult result = service(null, "tpl-1")
+                .createProject("WMS-2", "New project", "https://jira.test/browse/WMS-2");
 
         assertThat(result.status()).isEqualTo("ok");
         ArgumentCaptor<ObjectNode> body = ArgumentCaptor.forClass(ObjectNode.class);
@@ -137,6 +140,21 @@ class WarehouseBrainServiceTest {
         assertThat(sent.at("/properties/title/title/0/text/content").asText()).isEqualTo("New project");
         assertThat(sent.at("/properties/Jira/rich_text/0/text/content").asText()).isEqualTo("WMS-2");
         assertThat(sent.at("/properties/Started/date/start").asText()).isEqualTo(LocalDate.now().toString());
+        assertThat(sent.at("/properties/ticket/url").asText()).isEqualTo("https://jira.test/browse/WMS-2");
+        assertThat(sent.at("/properties/State/status/name").asText()).isEqualTo("Not started");
+    }
+
+    @Test
+    void createProjectOmitsTicketUrlWhenNotGiven() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any())).thenReturn(List.of());
+        when(notion.createPage(any())).thenReturn(page("new-1", "New project", "WMS-2"));
+
+        service(null, null).createProject("WMS-2", "New project", null);
+
+        ArgumentCaptor<ObjectNode> body = ArgumentCaptor.forClass(ObjectNode.class);
+        verify(notion).createPage(body.capture());
+        assertThat(body.getValue().at("/properties/ticket").isMissingNode()).isTrue();
+        assertThat(body.getValue().at("/properties/State/status/name").asText()).isEqualTo("Not started");
     }
 
     @Test
@@ -190,14 +208,56 @@ class WarehouseBrainServiceTest {
                 .thenReturn(List.of(page("p1", "My project", "WMS-1")));
 
         ContentResult result = service(null, null)
-                .updateProjectContent("WMS-1", "# Update\nnew text", "append");
+                .updateProjectContent("WMS-1", "# Update\nnew text", "append", null);
 
         assertThat(result.status()).isEqualTo("ok");
         ArgumentCaptor<ArrayNode> children = ArgumentCaptor.forClass(ArrayNode.class);
-        verify(notion).appendBlockChildren(eq("p1"), children.capture());
+        verify(notion).appendBlockChildren(eq("p1"), children.capture(), isNull());
         verify(notion, never()).deleteBlock(any());
         assertThat(children.getValue()).extracting(b -> b.path("type").asText())
                 .containsExactly("heading_1", "paragraph");
+    }
+
+    @Test
+    void updateProjectContentInsertsAfterHeadingAndItsDivider() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any()))
+                .thenReturn(List.of(page("p1", "My project", "WMS-1")));
+        when(notion.listBlockChildren("p1")).thenReturn(List.of(
+                textBlock("h1", "heading_1", "Project Description"),
+                textBlock("d1", "divider", ""),
+                textBlock("h2", "heading_1", "Tags")));
+        when(notion.appendBlockChildren(eq("p1"), any(), eq("d1")))
+                .thenReturn(mapper.createObjectNode().set("results", mapper.createArrayNode()));
+
+        ContentResult result = service(null, null)
+                .updateProjectContent("WMS-1", "from Jira", "append", "Project Description");
+
+        assertThat(result.status()).isEqualTo("ok");
+        verify(notion).appendBlockChildren(eq("p1"), any(), eq("d1"));
+    }
+
+    @Test
+    void updateProjectContentReportsMissingHeading() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any()))
+                .thenReturn(List.of(page("p1", "My project", "WMS-1")));
+        when(notion.listBlockChildren("p1")).thenReturn(List.of(
+                textBlock("h1", "heading_1", "Tags")));
+
+        ContentResult result = service(null, null)
+                .updateProjectContent("WMS-1", "text", "append", "Project Description");
+
+        assertThat(result.status()).isEqualTo("error");
+        assertThat(result.message()).contains("Project Description").contains("Tags");
+        verify(notion, never()).appendBlockChildren(any(), any(), any());
+    }
+
+    @Test
+    void updateProjectContentRejectsAfterHeadingWithReplace() {
+        ContentResult result = service(null, null)
+                .updateProjectContent("WMS-1", "text", "replace", "Project Description");
+
+        assertThat(result.status()).isEqualTo("error");
+        assertThat(result.message()).contains("afterHeading");
     }
 
     @Test
@@ -209,21 +269,21 @@ class WarehouseBrainServiceTest {
                 textBlock("b2", "paragraph", "content")));
 
         ContentResult result = service(null, null)
-                .updateProjectContent("WMS-1", "fresh", "replace");
+                .updateProjectContent("WMS-1", "fresh", "replace", null);
 
         assertThat(result.status()).isEqualTo("ok");
         verify(notion).deleteBlock("b1");
         verify(notion).deleteBlock("b2");
-        verify(notion).appendBlockChildren(eq("p1"), any());
+        verify(notion).appendBlockChildren(eq("p1"), any(), isNull());
     }
 
     @Test
     void updateProjectContentRejectsUnknownMode() {
-        ContentResult result = service(null, null).updateProjectContent("WMS-1", "text", "prepend");
+        ContentResult result = service(null, null).updateProjectContent("WMS-1", "text", "prepend", null);
 
         assertThat(result.status()).isEqualTo("error");
         assertThat(result.message()).contains("prepend");
-        verify(notion, never()).appendBlockChildren(any(), any());
+        verify(notion, never()).appendBlockChildren(any(), any(), any());
     }
 
     @Test
@@ -231,11 +291,11 @@ class WarehouseBrainServiceTest {
         when(notion.queryDataSource(eq(PROJECTS_DS), any()))
                 .thenReturn(List.of(page("p1", "One", "WMS-1"), page("p2", "Two", "WMS-1")));
 
-        ContentResult result = service(null, null).updateProjectContent("WMS-1", "text", "append");
+        ContentResult result = service(null, null).updateProjectContent("WMS-1", "text", "append", null);
 
         assertThat(result.status()).isEqualTo("error");
         assertThat(result.message()).contains("Multiple projects");
-        verify(notion, never()).appendBlockChildren(any(), any());
+        verify(notion, never()).appendBlockChildren(any(), any(), any());
     }
 
     @Test

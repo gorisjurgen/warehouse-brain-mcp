@@ -81,7 +81,9 @@ public class WarehouseBrainService {
                     + "Template content is applied asynchronously by Notion, so the page may look empty at first.")
     public ToolResult createProject(
             @McpToolParam(description = "Jira ticket key, e.g. WMS-1234", required = true) String jiraTicket,
-            @McpToolParam(description = "Project title / short description", required = true) String title) {
+            @McpToolParam(description = "Project title / short description", required = true) String title,
+            @McpToolParam(description = "Browse URL of the Jira ticket, stored in the ticket URL property")
+            String ticketUrl) {
         try {
             ToolResult existing = findProject(jiraTicket);
             if ("ok".equals(existing.status())) {
@@ -119,6 +121,15 @@ public class WarehouseBrainService {
             properties.putObject(props.startedPropertyName())
                     .putObject("date")
                     .put("start", LocalDate.now().toString());
+            if (ticketUrl != null && !ticketUrl.isBlank() && props.hasTicketUrlProperty()) {
+                properties.putObject(props.ticketUrlPropertyName())
+                        .put("url", ticketUrl);
+            }
+            if (props.hasStateProperty()) {
+                properties.putObject(props.statePropertyName())
+                        .putObject("status")
+                        .put("name", props.initialState());
+            }
 
             JsonNode page = notion.createPage(body);
             String note = props.hasTemplate()
@@ -216,16 +227,25 @@ public class WarehouseBrainService {
     @McpTool(name = "updateProjectContent",
             description = "Update the page content (body) of a Warehouse Brain project with Markdown. "
                     + "Mode 'append' adds the content at the end of the page; mode 'replace' DELETES the "
-                    + "entire existing page body and writes the new content. Supported Markdown: headings "
-                    + "1-3, paragraphs, bulleted/numbered lists, to-dos (- [ ]), fenced code, quotes, dividers.")
+                    + "entire existing page body and writes the new content. With afterHeading the content "
+                    + "is inserted into the section under that heading instead (append mode only). "
+                    + "Supported Markdown: headings 1-3, paragraphs, bulleted/numbered lists, to-dos (- [ ]), "
+                    + "fenced code, quotes, dividers.")
     public ContentResult updateProjectContent(
             @McpToolParam(description = "Jira ticket key, e.g. WMS-1234", required = true) String jiraTicket,
             @McpToolParam(description = "Markdown content to write", required = true) String content,
-            @McpToolParam(description = "'append' (default) or 'replace'") String mode) {
+            @McpToolParam(description = "'append' (default) or 'replace'") String mode,
+            @McpToolParam(description = "Insert the content directly under this heading "
+                    + "(exact heading text, e.g. 'Project Description') instead of at the page end")
+            String afterHeading) {
         try {
             String effectiveMode = mode == null || mode.isBlank() ? "append" : mode.strip().toLowerCase();
             if (!"append".equals(effectiveMode) && !"replace".equals(effectiveMode)) {
                 return ContentResult.failure("error", "Unknown mode '" + mode + "'; use 'append' or 'replace'.");
+            }
+            boolean anchored = afterHeading != null && !afterHeading.isBlank();
+            if (anchored && !"append".equals(effectiveMode)) {
+                return ContentResult.failure("error", "afterHeading only works with mode 'append'.");
             }
             Object resolved = resolveSingle(jiraTicket);
             if (resolved instanceof ContentResult failure) {
@@ -233,6 +253,14 @@ public class WarehouseBrainService {
             }
             ProjectInfo project = (ProjectInfo) resolved;
 
+            String after = null;
+            if (anchored) {
+                Object anchor = findInsertAnchor(project.id(), afterHeading);
+                if (anchor instanceof ContentResult failure) {
+                    return failure;
+                }
+                after = (String) anchor;
+            }
             if ("replace".equals(effectiveMode)) {
                 for (JsonNode block : notion.listBlockChildren(project.id())) {
                     notion.deleteBlock(block.path("id").asText());
@@ -244,14 +272,49 @@ public class WarehouseBrainService {
                 for (int j = start; j < Math.min(blocks.size(), start + 100); j++) {
                     chunk.add(blocks.get(j));
                 }
-                notion.appendBlockChildren(project.id(), chunk);
+                JsonNode response = notion.appendBlockChildren(project.id(), chunk, after);
+                if (after != null) {
+                    JsonNode inserted = response.path("results");
+                    if (inserted.size() > 0) {
+                        after = inserted.get(inserted.size() - 1).path("id").asText();
+                    }
+                }
             }
-            String verb = "replace".equals(effectiveMode) ? "Replaced" : "Appended to";
+            String verb = "replace".equals(effectiveMode) ? "Replaced"
+                    : anchored ? "Inserted under '" + afterHeading + "' in" : "Appended to";
             return ContentResult.ok(verb + " content of '" + project.title() + "' ("
                     + blocks.size() + " block(s) written).", project, null);
         } catch (NotionException e) {
             return ContentResult.failure("error", e.getMessage());
         }
+    }
+
+    /**
+     * Finds the block id to insert after for a section heading: the first
+     * top-level heading matching {@code headingText} (case-insensitive), or
+     * the divider directly following it. Returns a failure ContentResult
+     * when no heading matches.
+     */
+    private Object findInsertAnchor(String pageId, String headingText) {
+        List<JsonNode> blocks = notion.listBlockChildren(pageId);
+        List<String> headings = new ArrayList<>();
+        for (int i = 0; i < blocks.size(); i++) {
+            JsonNode block = blocks.get(i);
+            String type = block.path("type").asText();
+            if (!type.startsWith("heading_")) {
+                continue;
+            }
+            String text = joinRichText(block.path(type).path("rich_text")).strip();
+            headings.add(text);
+            if (text.equalsIgnoreCase(headingText.strip())) {
+                if (i + 1 < blocks.size() && "divider".equals(blocks.get(i + 1).path("type").asText())) {
+                    return blocks.get(i + 1).path("id").asText();
+                }
+                return block.path("id").asText();
+            }
+        }
+        return ContentResult.failure("error", "No heading '" + headingText
+                + "' found on the page. Available headings: " + headings);
     }
 
     /** Resolves a Jira ticket to exactly one project, or returns a failure ContentResult. */

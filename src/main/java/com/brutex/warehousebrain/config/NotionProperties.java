@@ -22,7 +22,10 @@ public record NotionProperties(
         String templateId,
         @DefaultValue("Jira") @NotBlank String jiraPropertyName,
         @DefaultValue("rich_text") @NotBlank String jiraPropertyType,
-        @DefaultValue("Started") @NotBlank String startedPropertyName) {
+        @DefaultValue("Started") @NotBlank String startedPropertyName,
+        @DefaultValue("ticket") String ticketUrlPropertyName,
+        @DefaultValue("State") String statePropertyName,
+        @DefaultValue("Not started") String initialState) {
 
     public boolean hasArchives() {
         return archivesDataSourceId != null && !archivesDataSourceId.isBlank();
@@ -30,5 +33,14 @@ public record NotionProperties(
 
     public boolean hasTemplate() {
         return templateId != null && !templateId.isBlank();
+    }
+
+    public boolean hasTicketUrlProperty() {
+        return ticketUrlPropertyName != null && !ticketUrlPropertyName.isBlank();
+    }
+
+    public boolean hasStateProperty() {
+        return statePropertyName != null && !statePropertyName.isBlank()
+                && initialState != null && !initialState.isBlank();
     }
 }

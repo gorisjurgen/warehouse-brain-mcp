@@ -101,11 +101,33 @@ public class NotionClient {
 
     /** PATCH /blocks/{id}/children — appends child blocks (max 100 per call). */
     public JsonNode appendBlockChildren(String blockId, ArrayNode children) {
+        return appendBlockChildren(blockId, children, null);
+    }
+
+    /**
+     * Notion-Version 2026-03-11 rejects the {@code after} parameter on block
+     * appends; 2025-09-03 is the last version that accepts it, so anchored
+     * appends are pinned to it.
+     */
+    static final String AFTER_COMPAT_VERSION = "2025-09-03";
+
+    /**
+     * PATCH /blocks/{id}/children with {@code after} — inserts child blocks
+     * directly after an existing child instead of at the end.
+     */
+    public JsonNode appendBlockChildren(String blockId, ArrayNode children, String afterBlockId) {
         ObjectNode body = mapper.createObjectNode();
+        boolean anchored = afterBlockId != null && !afterBlockId.isBlank();
         body.set("children", children);
-        return rest.patch()
-                .uri("/blocks/{id}/children", blockId)
-                .body(body)
+        if (anchored) {
+            body.put("after", afterBlockId);
+        }
+        var request = rest.patch()
+                .uri("/blocks/{id}/children", blockId);
+        if (anchored) {
+            request = request.header("Notion-Version", AFTER_COMPAT_VERSION);
+        }
+        return request.body(body)
                 .retrieve()
                 .body(JsonNode.class);
     }
