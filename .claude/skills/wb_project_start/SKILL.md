@@ -1,6 +1,6 @@
 ---
 name: wb_project_start
-description: starts a warehouse project from a Jira ticket - verifies the WHS ticket is assigned to me via Rovo/Atlassian, then creates the Notion project from the Warehouse Project Template with the Jira description copied in. Use when the user runs /wb_project_start <ticket-number>.
+description: starts a warehouse project from a Jira ticket - verifies the WHS ticket is assigned to me via Rovo/Atlassian, then creates the Notion project from the Warehouse Project Template with the Jira description copied in. Use when the user runs /wb_project_start with a ticket number.
 ---
 
 # Warehouse Project Start from Jira
@@ -12,14 +12,15 @@ for Notion.
 ## Instructions
 
 ### Step 1: Normalize the ticket key
-A bare number becomes `WHS-<number>`. Any other project prefix is kept as
-given but the ticket must live in the WHS project (Step 2 enforces this).
+A bare number like `5761` becomes `WHS-5761`. Any other project prefix is
+kept as given but the ticket must live in the WHS project (Step 2 enforces
+this).
 
 ### Step 2: Verify the ticket is assigned to me
-Call `searchJiraIssuesUsingJql` with:
+Call `searchJiraIssuesUsingJql` with (using WHS-5761 as example):
 
 ```
-key = "WHS-<n>" AND project = WHS AND assignee = currentUser()
+key = "WHS-5761" AND project = WHS AND assignee = currentUser()
 ```
 
 requesting fields `summary`, `description`, `status`.
@@ -34,8 +35,8 @@ Call `createProject` with:
 
 - `jiraTicket`: the normalized key
 - `title`: the Jira ticket summary
-- `ticketUrl`: the browse URL, `https://<site>/browse/<key>` (take the site
-  from the Jira search result or `getAccessibleAtlassianResources`)
+- `ticketUrl`: the browse URL, e.g. `https://brutex.atlassian.net/browse/WHS-5761`
+  (take the site from the Jira search result or `getAccessibleAtlassianResources`)
 
 The tool refuses duplicates, creates the page from the Warehouse Project
 Template, and sets started = today, the Jira property, the ticket URL and
