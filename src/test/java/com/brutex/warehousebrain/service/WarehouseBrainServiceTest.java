@@ -5,7 +5,10 @@ import java.util.List;
 
 import com.brutex.warehousebrain.config.NotionProperties;
 import com.brutex.warehousebrain.notion.NotionClient;
+import com.brutex.warehousebrain.notion.NotionMarkdown;
+import com.brutex.warehousebrain.service.WarehouseBrainService.ContentResult;
 import com.brutex.warehousebrain.service.WarehouseBrainService.ToolResult;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,7 +42,17 @@ class WarehouseBrainServiceTest {
                 "token", "https://notion.test/v1", "2026-03-11",
                 PROJECTS_DS, archivesDsId, templateId,
                 "Jira", "rich_text", "Started");
-        return new WarehouseBrainService(notion, props, mapper);
+        return new WarehouseBrainService(notion, props, mapper, new NotionMarkdown(mapper));
+    }
+
+    private JsonNode textBlock(String id, String type, String text) {
+        try {
+            return mapper.readTree("""
+                    {"id": "%s", "type": "%s", "%s": {"rich_text": [{"plain_text": "%s"}]}}
+                    """.formatted(id, type, type, text));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private JsonNode page(String id, String title, String jira) {
@@ -145,6 +158,84 @@ class WarehouseBrainServiceTest {
         assertThat(result.status()).isEqualTo("ok");
         assertThat(result.projects().get(0).location()).isEqualTo("Archives");
         verify(notion).movePage("p1", ARCHIVES_DS);
+    }
+
+    @Test
+    void getProjectContentRendersBlocksAsMarkdown() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any()))
+                .thenReturn(List.of(page("p1", "My project", "WMS-1")));
+        when(notion.listBlockChildren("p1")).thenReturn(List.of(
+                textBlock("b1", "heading_1", "Notes"),
+                textBlock("b2", "paragraph", "Hello")));
+
+        ContentResult result = service(null, null).getProjectContent("WMS-1");
+
+        assertThat(result.status()).isEqualTo("ok");
+        assertThat(result.content()).isEqualTo("# Notes\nHello");
+        assertThat(result.project().title()).isEqualTo("My project");
+    }
+
+    @Test
+    void getProjectContentReportsNotFound() {
+        when(notion.queryDataSource(any(), any())).thenReturn(List.of());
+
+        ContentResult result = service(ARCHIVES_DS, null).getProjectContent("WMS-404");
+
+        assertThat(result.status()).isEqualTo("not_found");
+    }
+
+    @Test
+    void updateProjectContentAppendsParsedBlocks() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any()))
+                .thenReturn(List.of(page("p1", "My project", "WMS-1")));
+
+        ContentResult result = service(null, null)
+                .updateProjectContent("WMS-1", "# Update\nnew text", "append");
+
+        assertThat(result.status()).isEqualTo("ok");
+        ArgumentCaptor<ArrayNode> children = ArgumentCaptor.forClass(ArrayNode.class);
+        verify(notion).appendBlockChildren(eq("p1"), children.capture());
+        verify(notion, never()).deleteBlock(any());
+        assertThat(children.getValue()).extracting(b -> b.path("type").asText())
+                .containsExactly("heading_1", "paragraph");
+    }
+
+    @Test
+    void updateProjectContentReplaceDeletesExistingBlocksFirst() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any()))
+                .thenReturn(List.of(page("p1", "My project", "WMS-1")));
+        when(notion.listBlockChildren("p1")).thenReturn(List.of(
+                textBlock("b1", "paragraph", "old"),
+                textBlock("b2", "paragraph", "content")));
+
+        ContentResult result = service(null, null)
+                .updateProjectContent("WMS-1", "fresh", "replace");
+
+        assertThat(result.status()).isEqualTo("ok");
+        verify(notion).deleteBlock("b1");
+        verify(notion).deleteBlock("b2");
+        verify(notion).appendBlockChildren(eq("p1"), any());
+    }
+
+    @Test
+    void updateProjectContentRejectsUnknownMode() {
+        ContentResult result = service(null, null).updateProjectContent("WMS-1", "text", "prepend");
+
+        assertThat(result.status()).isEqualTo("error");
+        assertThat(result.message()).contains("prepend");
+        verify(notion, never()).appendBlockChildren(any(), any());
+    }
+
+    @Test
+    void updateProjectContentRefusesAmbiguousMatches() {
+        when(notion.queryDataSource(eq(PROJECTS_DS), any()))
+                .thenReturn(List.of(page("p1", "One", "WMS-1"), page("p2", "Two", "WMS-1")));
+
+        ContentResult result = service(null, null).updateProjectContent("WMS-1", "text", "append");
+
+        assertThat(result.status()).isEqualTo("error");
+        assertThat(result.message()).contains("Multiple projects");
+        verify(notion, never()).appendBlockChildren(any(), any());
     }
 
     @Test

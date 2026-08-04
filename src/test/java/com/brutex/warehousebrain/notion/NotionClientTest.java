@@ -106,6 +106,50 @@ class NotionClientTest {
     }
 
     @Test
+    void listBlockChildrenFollowsPagination() {
+        server.expect(requestTo(BASE + "/blocks/page-1/children?page_size=100"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(
+                        "{\"results\":[{\"id\":\"b1\"}],\"has_more\":true,\"next_cursor\":\"cur-2\"}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/blocks/page-1/children?page_size=100&start_cursor=cur-2"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(
+                        "{\"results\":[{\"id\":\"b2\"}],\"has_more\":false}",
+                        MediaType.APPLICATION_JSON));
+
+        List<JsonNode> results = client.listBlockChildren("page-1");
+
+        assertThat(results).extracting(n -> n.path("id").asText()).containsExactly("b1", "b2");
+        server.verify();
+    }
+
+    @Test
+    void appendBlockChildrenPatchesChildrenArray() {
+        server.expect(requestTo(BASE + "/blocks/page-1/children"))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(jsonPath("$.children[0].type").value("paragraph"))
+                .andRespond(withSuccess("{\"results\":[]}", MediaType.APPLICATION_JSON));
+
+        var children = mapper.createArrayNode();
+        children.addObject().put("object", "block").put("type", "paragraph");
+        client.appendBlockChildren("page-1", children);
+
+        server.verify();
+    }
+
+    @Test
+    void deleteBlockSendsDelete() {
+        server.expect(requestTo(BASE + "/blocks/b1"))
+                .andExpect(method(HttpMethod.DELETE))
+                .andRespond(withSuccess("{\"id\":\"b1\",\"archived\":true}", MediaType.APPLICATION_JSON));
+
+        client.deleteBlock("b1");
+
+        server.verify();
+    }
+
+    @Test
     void notionErrorBodyBecomesNotionException() {
         server.expect(requestTo(BASE + "/data_sources/ds-projects/query"))
                 .andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)

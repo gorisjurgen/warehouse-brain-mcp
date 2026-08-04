@@ -12,6 +12,13 @@ as MCP tools for Claude, plus the Claude skills that use them.
 | `createProject` | Create a project page from the Warehouse Project Template with Jira + Started + title set (duplicate-guarded) |
 | `archiveProject` | Move a project page from Projects to Archives (PARA archive, not trash) |
 | `listActiveProjects` | List active projects, most recently started first |
+| `getProjectContent` | Read a project's page body as Markdown (looks up by Jira key in Projects + Archives) |
+| `updateProjectContent` | Write Markdown to a project's page body: `append` adds at the end, `replace` **deletes the whole body** and rewrites it |
+
+`getProjectContent`/`updateProjectContent` support a Markdown subset: headings
+1–3, paragraphs, bulleted/numbered lists, to-dos (`- [ ]`), fenced code,
+quotes, dividers. Rich-text formatting is flattened to plain text on read;
+nested lists are indented on read but parsed flat on write.
 
 Skills in [.claude/skills/](.claude/skills/) (`warehouse-project-start`,
 `warehouse-project-archive`) drive these tools; the server is registered for

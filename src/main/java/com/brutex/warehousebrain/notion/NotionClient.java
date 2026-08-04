@@ -5,6 +5,7 @@ import java.util.List;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -67,6 +68,52 @@ public class NotionClient {
         return rest.post()
                 .uri("/pages/{id}/move", pageId)
                 .body(body)
+                .retrieve()
+                .body(JsonNode.class);
+    }
+
+    /**
+     * GET /blocks/{id}/children — returns all child blocks, following
+     * {@code has_more}/{@code next_cursor} pagination.
+     */
+    public List<JsonNode> listBlockChildren(String blockId) {
+        List<JsonNode> results = new ArrayList<>();
+        String cursor = null;
+        while (true) {
+            String uri = cursor == null
+                    ? "/blocks/{id}/children?page_size=100"
+                    : "/blocks/{id}/children?page_size=100&start_cursor=" + cursor;
+            JsonNode page = rest.get()
+                    .uri(uri, blockId)
+                    .retrieve()
+                    .body(JsonNode.class);
+            if (page == null) {
+                break;
+            }
+            page.path("results").forEach(results::add);
+            if (!page.path("has_more").asBoolean(false)) {
+                break;
+            }
+            cursor = page.path("next_cursor").asText();
+        }
+        return results;
+    }
+
+    /** PATCH /blocks/{id}/children — appends child blocks (max 100 per call). */
+    public JsonNode appendBlockChildren(String blockId, ArrayNode children) {
+        ObjectNode body = mapper.createObjectNode();
+        body.set("children", children);
+        return rest.patch()
+                .uri("/blocks/{id}/children", blockId)
+                .body(body)
+                .retrieve()
+                .body(JsonNode.class);
+    }
+
+    /** DELETE /blocks/{id} — moves a block to the trash. */
+    public JsonNode deleteBlock(String blockId) {
+        return rest.delete()
+                .uri("/blocks/{id}", blockId)
                 .retrieve()
                 .body(JsonNode.class);
     }

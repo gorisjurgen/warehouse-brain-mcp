@@ -7,6 +7,8 @@ import java.util.List;
 import com.brutex.warehousebrain.config.NotionProperties;
 import com.brutex.warehousebrain.notion.NotionClient;
 import com.brutex.warehousebrain.notion.NotionException;
+import com.brutex.warehousebrain.notion.NotionMarkdown;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -25,11 +27,14 @@ public class WarehouseBrainService {
     private final NotionClient notion;
     private final NotionProperties props;
     private final ObjectMapper mapper;
+    private final NotionMarkdown markdown;
 
-    public WarehouseBrainService(NotionClient notion, NotionProperties props, ObjectMapper mapper) {
+    public WarehouseBrainService(NotionClient notion, NotionProperties props, ObjectMapper mapper,
+            NotionMarkdown markdown) {
         this.notion = notion;
         this.props = props;
         this.mapper = mapper;
+        this.markdown = markdown;
     }
 
     public record ProjectInfo(String id, String url, String title, String jira, String started, String location) {}
@@ -175,6 +180,94 @@ public class WarehouseBrainService {
         } catch (NotionException e) {
             return ToolResult.error(e.getMessage());
         }
+    }
+
+    public record ContentResult(String status, String message, ProjectInfo project, String content) {
+
+        static ContentResult ok(String message, ProjectInfo project, String content) {
+            return new ContentResult("ok", message, project, content);
+        }
+
+        static ContentResult failure(String status, String message) {
+            return new ContentResult(status, message, null, null);
+        }
+    }
+
+    @McpTool(name = "getProjectContent",
+            description = "Read the full page content (body) of a Warehouse Brain project as Markdown. "
+                    + "Looks the project up by Jira ticket key in Projects and Archives.")
+    public ContentResult getProjectContent(
+            @McpToolParam(description = "Jira ticket key, e.g. WMS-1234", required = true) String jiraTicket) {
+        try {
+            Object resolved = resolveSingle(jiraTicket);
+            if (resolved instanceof ContentResult failure) {
+                return failure;
+            }
+            ProjectInfo project = (ProjectInfo) resolved;
+            String content = markdown.toMarkdown(notion.listBlockChildren(project.id()),
+                    notion::listBlockChildren);
+            return ContentResult.ok("Content of '" + project.title() + "' (" + project.location() + ").",
+                    project, content);
+        } catch (NotionException e) {
+            return ContentResult.failure("error", e.getMessage());
+        }
+    }
+
+    @McpTool(name = "updateProjectContent",
+            description = "Update the page content (body) of a Warehouse Brain project with Markdown. "
+                    + "Mode 'append' adds the content at the end of the page; mode 'replace' DELETES the "
+                    + "entire existing page body and writes the new content. Supported Markdown: headings "
+                    + "1-3, paragraphs, bulleted/numbered lists, to-dos (- [ ]), fenced code, quotes, dividers.")
+    public ContentResult updateProjectContent(
+            @McpToolParam(description = "Jira ticket key, e.g. WMS-1234", required = true) String jiraTicket,
+            @McpToolParam(description = "Markdown content to write", required = true) String content,
+            @McpToolParam(description = "'append' (default) or 'replace'") String mode) {
+        try {
+            String effectiveMode = mode == null || mode.isBlank() ? "append" : mode.strip().toLowerCase();
+            if (!"append".equals(effectiveMode) && !"replace".equals(effectiveMode)) {
+                return ContentResult.failure("error", "Unknown mode '" + mode + "'; use 'append' or 'replace'.");
+            }
+            Object resolved = resolveSingle(jiraTicket);
+            if (resolved instanceof ContentResult failure) {
+                return failure;
+            }
+            ProjectInfo project = (ProjectInfo) resolved;
+
+            if ("replace".equals(effectiveMode)) {
+                for (JsonNode block : notion.listBlockChildren(project.id())) {
+                    notion.deleteBlock(block.path("id").asText());
+                }
+            }
+            ArrayNode blocks = markdown.toBlocks(content);
+            for (int start = 0; start < blocks.size(); start += 100) {
+                ArrayNode chunk = mapper.createArrayNode();
+                for (int j = start; j < Math.min(blocks.size(), start + 100); j++) {
+                    chunk.add(blocks.get(j));
+                }
+                notion.appendBlockChildren(project.id(), chunk);
+            }
+            String verb = "replace".equals(effectiveMode) ? "Replaced" : "Appended to";
+            return ContentResult.ok(verb + " content of '" + project.title() + "' ("
+                    + blocks.size() + " block(s) written).", project, null);
+        } catch (NotionException e) {
+            return ContentResult.failure("error", e.getMessage());
+        }
+    }
+
+    /** Resolves a Jira ticket to exactly one project, or returns a failure ContentResult. */
+    private Object resolveSingle(String jiraTicket) {
+        List<ProjectInfo> hits = new ArrayList<>(search(props.projectsDataSourceId(), "Projects", jiraTicket));
+        if (props.hasArchives()) {
+            hits.addAll(search(props.archivesDataSourceId(), "Archives", jiraTicket));
+        }
+        if (hits.isEmpty()) {
+            return ContentResult.failure("not_found", "No project found for " + jiraTicket + ".");
+        }
+        if (hits.size() > 1) {
+            return ContentResult.failure("error", "Multiple projects match " + jiraTicket
+                    + "; refine the ticket key. Matches: " + hits.stream().map(ProjectInfo::url).toList());
+        }
+        return hits.get(0);
     }
 
     private List<ProjectInfo> search(String dataSourceId, String location, String jiraTicket) {
